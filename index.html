@@ -1552,7 +1552,18 @@ async function fetchPreviousFxSnapshot() {
   for (let daysBack = 1; daysBack <= 4; daysBack += 1) {
     const date = new Date();
     date.setDate(date.getDate() - daysBack);
-    const response = await fetch(`https://api.frankfurter.app/${formatIsoDate(date)}?from=USD&to=EUR,AED,MXN`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    let response;
+    try {
+      response = await fetch(`https://api.frankfurter.app/${formatIsoDate(date)}?from=USD&to=EUR,AED,MXN`, {
+        signal: controller.signal
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      continue;
+    }
+    clearTimeout(timeout);
     if (!response.ok) continue;
     const data = await response.json();
     if (data?.rates) return data.rates;
@@ -1561,10 +1572,15 @@ async function fetchPreviousFxSnapshot() {
 }
 
 async function fetchFxReferenceRates() {
+  const latestController = new AbortController();
+  const latestTimeout = setTimeout(() => latestController.abort(), 3500);
   const [latestResponse, previousRates] = await Promise.all([
-    fetch('https://api.frankfurter.app/latest?from=USD&to=EUR,AED,MXN'),
+    fetch('https://api.frankfurter.app/latest?from=USD&to=EUR,AED,MXN', {
+      signal: latestController.signal
+    }),
     fetchPreviousFxSnapshot()
   ]);
+  clearTimeout(latestTimeout);
   const response = latestResponse;
   if (!response.ok) throw new Error('FX reference fetch failed');
   const data = await response.json();
@@ -1633,14 +1649,20 @@ async function fetchLiveLiquidity(fx) {
 }
 
 async function refreshMarketingData() {
+  let fx = { usdEur: 0.8627 };
   try {
-    const fx = await fetchFxReferenceRates();
+    fx = await fetchFxReferenceRates();
+  } catch (error) {
+    console.warn('FX reference refresh failed, using fallback EUR conversion', error);
+  }
+
+  try {
     await Promise.all([
       fetchBlankFxRouteQuotes(),
       fetchLiveLiquidity(fx)
     ]);
   } catch (error) {
-    console.warn('Marketing data refresh failed', error);
+    console.warn('Marketing liquidity refresh failed', error);
     setMetric('liquidityRefreshValue', 'Fallback');
   }
 
