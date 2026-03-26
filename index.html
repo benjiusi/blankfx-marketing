@@ -1633,9 +1633,7 @@ async function fetchPoolOverviewMetrics(fx) {
   ]);
 
   const usdPoolTvl = Number(ethers.formatUnits(usdReserve, 18));
-  const eurPoolTvlInEur = Number(ethers.formatUnits(eurReserve, 18));
-  const eurToUsd = fx.usdEur > 0 ? (1 / fx.usdEur) : 1.09;
-  const eurPoolTvl = eurPoolTvlInEur * eurToUsd;
+  const eurPoolTvl = Number(ethers.formatUnits(eurReserve, 18));
 
   setMetric('usdPoolTvlValue', formatCompactUsd(usdPoolTvl));
   setMetric('eurPoolTvlValue', formatCompactUsd(eurPoolTvl));
