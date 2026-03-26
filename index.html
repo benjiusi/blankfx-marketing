@@ -940,20 +940,20 @@ html[data-theme="light"] .app-frame {
     </div>
     <div class="stat-pills reveal">
       <div class="stat-pill">
-        <span class="val" id="totalLiquidityValue">$--</span>
-        <span class="label">Live Sepolia Liquidity</span>
+        <span class="val" id="usdPoolTvlValue">$--</span>
+        <span class="label">USD Pool TVL</span>
       </div>
       <div class="stat-pill">
-        <span class="val" id="usdBasketValue">$--</span>
-        <span class="label">USD Basket</span>
+        <span class="val" id="eurPoolTvlValue">$--</span>
+        <span class="label">EUR Pool TVL</span>
       </div>
       <div class="stat-pill">
-        <span class="val" id="eurBasketValue">$--</span>
-        <span class="label">EUR Basket</span>
+        <span class="val" id="totalCurrenciesValue">4</span>
+        <span class="label">Total Currencies</span>
       </div>
       <div class="stat-pill">
-        <span class="val" id="liquidityRefreshValue">--:--</span>
-        <span class="label">Last Refresh</span>
+        <span class="val" id="tradingVolume24hValue">$--</span>
+        <span class="label">24h Trading Volume</span>
       </div>
     </div>
   </div>
@@ -1494,6 +1494,10 @@ const ERC20_ABI = [
   'function balanceOf(address account) view returns (uint256)'
 ];
 
+const LP_POOL_STATE_ABI = [
+  'function poolState() view returns (uint256 totalReserve, uint256 totalLiability, uint256 supply, uint256 pricePerShare)'
+];
+
 const ROUTER_ABI = [
   'function quoteUSDToForeign(address pool, address foreignToken, address usdToken, uint256 amountIn) view returns (uint256 amountOut, uint256 fee, uint256 deviation)'
 ];
@@ -1515,13 +1519,10 @@ function formatRate(rate) {
 
 function formatCompactUsd(value) {
   if (!Number.isFinite(value)) return '$—';
+  if (value <= 0) return '$0.00';
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
   return `$${value.toFixed(2)}`;
-}
-
-function formatRefreshTime(date = new Date()) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function renderTicker() {
@@ -1622,30 +1623,80 @@ async function fetchBlankFxRouteQuotes() {
   }));
 }
 
-async function fetchLiveLiquidity(fx) {
-  const tokenEntries = Object.entries(TOKENS);
-  const balances = await Promise.all(tokenEntries.map(async ([symbol, token]) => {
-    try {
-      const holder = token.basket === 'USD' ? CONTRACTS.USD_HUB : CONTRACTS.EUR_POOL;
-      const contract = new ethers.Contract(token.address, ERC20_ABI, provider);
-      const raw = await contract.balanceOf(holder);
-      return [symbol, Number(ethers.formatUnits(raw, token.decimals))];
-    } catch (error) {
-      console.warn(`Liquidity fetch failed for ${symbol}`, error);
-      return [symbol, 0];
-    }
-  }));
+async function fetchPoolOverviewMetrics(fx) {
+  const usdPool = new ethers.Contract(CONTRACTS.USD_HUB, LP_POOL_STATE_ABI, provider);
+  const eurPool = new ethers.Contract(CONTRACTS.EUR_POOL, LP_POOL_STATE_ABI, provider);
 
-  const liquidity = Object.fromEntries(balances);
-  const usdBasket = (liquidity.USDC || 0) + (liquidity.USDT || 0);
-  const eurBasket = liquidity.EURC || 0;
+  const [[usdReserve], [eurReserve]] = await Promise.all([
+    usdPool.poolState(),
+    eurPool.poolState()
+  ]);
+
+  const usdPoolTvl = Number(ethers.formatUnits(usdReserve, 18));
+  const eurPoolTvlInEur = Number(ethers.formatUnits(eurReserve, 18));
   const eurToUsd = fx.usdEur > 0 ? (1 / fx.usdEur) : 1.09;
-  const totalUsdEquivalent = usdBasket + (eurBasket * eurToUsd);
+  const eurPoolTvl = eurPoolTvlInEur * eurToUsd;
 
-  setMetric('usdBasketValue', formatCompactUsd(usdBasket));
-  setMetric('eurBasketValue', formatCompactUsd(eurBasket));
-  setMetric('totalLiquidityValue', formatCompactUsd(totalUsdEquivalent));
-  setMetric('liquidityRefreshValue', formatRefreshTime());
+  setMetric('usdPoolTvlValue', formatCompactUsd(usdPoolTvl));
+  setMetric('eurPoolTvlValue', formatCompactUsd(eurPoolTvl));
+  setMetric('totalCurrenciesValue', '4');
+}
+
+async function fetchTradingVolume24h(fx) {
+  const currentBlock = await provider.getBlockNumber();
+  const approxBlocksPerDay = 7200;
+  const fromBlock = Math.max(currentBlock - approxBlocksPerDay, 0);
+
+  const usdHubInterface = new ethers.Interface([
+    'event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, uint256 feeBps)'
+  ]);
+  const eurPoolInterface = new ethers.Interface([
+    'event SwappedCross(address indexed foreignToken, bool foreignIn, uint256 foreignAmount, uint256 usdAmount, uint256 oraclePrice, uint256 feeBps)'
+  ]);
+
+  const [usdLogs, eurCrossLogs] = await Promise.all([
+    provider.getLogs({
+      address: CONTRACTS.USD_HUB,
+      fromBlock,
+      toBlock: currentBlock,
+      topics: [ethers.id('Swapped(address,address,uint256,uint256,uint256)')]
+    }),
+    provider.getLogs({
+      address: CONTRACTS.EUR_POOL,
+      fromBlock,
+      toBlock: currentBlock,
+      topics: [ethers.id('SwappedCross(address,bool,uint256,uint256,uint256,uint256)')]
+    })
+  ]);
+
+  let totalUsdVolume = 0;
+
+  usdLogs.forEach((log) => {
+    try {
+      const parsed = usdHubInterface.parseLog(log);
+      totalUsdVolume += Number(ethers.formatUnits(parsed.args.amountIn, 6));
+    } catch (error) {
+      console.warn('USD hub volume parse failed', error);
+    }
+  });
+
+  eurCrossLogs.forEach((log) => {
+    try {
+      const parsed = eurPoolInterface.parseLog(log);
+      const foreignIn = Boolean(parsed.args.foreignIn);
+      const foreignAmount = parsed.args.foreignAmount;
+      const usdAmount = parsed.args.usdAmount;
+      if (foreignIn) {
+        totalUsdVolume += Number(ethers.formatUnits(usdAmount, 6));
+      } else {
+        totalUsdVolume += Number(ethers.formatUnits(foreignAmount, 6));
+      }
+    } catch (error) {
+      console.warn('EUR pool volume parse failed', error);
+    }
+  });
+
+  setMetric('tradingVolume24hValue', formatCompactUsd(totalUsdVolume));
 }
 
 async function refreshMarketingData() {
@@ -1659,11 +1710,12 @@ async function refreshMarketingData() {
   try {
     await Promise.all([
       fetchBlankFxRouteQuotes(),
-      fetchLiveLiquidity(fx)
+      fetchPoolOverviewMetrics(fx),
+      fetchTradingVolume24h(fx)
     ]);
   } catch (error) {
-    console.warn('Marketing liquidity refresh failed', error);
-    setMetric('liquidityRefreshValue', 'Fallback');
+    console.warn('Marketing pool metrics refresh failed', error);
+    setMetric('tradingVolume24hValue', '$—');
   }
 
   renderTicker();
