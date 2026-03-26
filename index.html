@@ -952,8 +952,8 @@ html[data-theme="light"] .app-frame {
         <span class="label">Total Currencies</span>
       </div>
       <div class="stat-pill">
-        <span class="val" id="tradingVolume24hValue">$--</span>
-        <span class="label">24h Trading Volume</span>
+        <span class="val">Sepolia</span>
+        <span class="label">Network</span>
       </div>
     </div>
   </div>
@@ -1640,63 +1640,6 @@ async function fetchPoolOverviewMetrics(fx) {
   setMetric('totalCurrenciesValue', '4');
 }
 
-async function fetchTradingVolume24h(fx) {
-  const currentBlock = await provider.getBlockNumber();
-  const approxBlocksPerDay = 7200;
-  const fromBlock = Math.max(currentBlock - approxBlocksPerDay, 0);
-
-  const usdHubInterface = new ethers.Interface([
-    'event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, uint256 feeBps)'
-  ]);
-  const eurPoolInterface = new ethers.Interface([
-    'event SwappedCross(address indexed foreignToken, bool foreignIn, uint256 foreignAmount, uint256 usdAmount, uint256 oraclePrice, uint256 feeBps)'
-  ]);
-
-  const [usdLogs, eurCrossLogs] = await Promise.all([
-    provider.getLogs({
-      address: CONTRACTS.USD_HUB,
-      fromBlock,
-      toBlock: currentBlock,
-      topics: [ethers.id('Swapped(address,address,uint256,uint256,uint256)')]
-    }),
-    provider.getLogs({
-      address: CONTRACTS.EUR_POOL,
-      fromBlock,
-      toBlock: currentBlock,
-      topics: [ethers.id('SwappedCross(address,bool,uint256,uint256,uint256,uint256)')]
-    })
-  ]);
-
-  let totalUsdVolume = 0;
-
-  usdLogs.forEach((log) => {
-    try {
-      const parsed = usdHubInterface.parseLog(log);
-      totalUsdVolume += Number(ethers.formatUnits(parsed.args.amountIn, 6));
-    } catch (error) {
-      console.warn('USD hub volume parse failed', error);
-    }
-  });
-
-  eurCrossLogs.forEach((log) => {
-    try {
-      const parsed = eurPoolInterface.parseLog(log);
-      const foreignIn = Boolean(parsed.args.foreignIn);
-      const foreignAmount = parsed.args.foreignAmount;
-      const usdAmount = parsed.args.usdAmount;
-      if (foreignIn) {
-        totalUsdVolume += Number(ethers.formatUnits(usdAmount, 6));
-      } else {
-        totalUsdVolume += Number(ethers.formatUnits(foreignAmount, 6));
-      }
-    } catch (error) {
-      console.warn('EUR pool volume parse failed', error);
-    }
-  });
-
-  setMetric('tradingVolume24hValue', formatCompactUsd(totalUsdVolume));
-}
-
 async function refreshMarketingData() {
   let fx = { usdEur: 0.8627 };
   try {
@@ -1708,12 +1651,10 @@ async function refreshMarketingData() {
   try {
     await Promise.all([
       fetchBlankFxRouteQuotes(),
-      fetchPoolOverviewMetrics(fx),
-      fetchTradingVolume24h(fx)
+      fetchPoolOverviewMetrics(fx)
     ]);
   } catch (error) {
     console.warn('Marketing pool metrics refresh failed', error);
-    setMetric('tradingVolume24hValue', '$—');
   }
 
   renderTicker();
