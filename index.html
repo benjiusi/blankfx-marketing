@@ -818,9 +818,9 @@ html[data-theme="light"] .app-frame {
       <a href="#how-it-works" class="btn btn-ghost">See How It Works</a>
     </div>
     <div class="trust-strip">
-      <span>$10M+ Routed</span><span>&middot;</span>
-      <span>Leading FX LPs Onboarded</span><span>&middot;</span>
-      <span>EUR↔USDT Active</span><span>&middot;</span>
+      <span>EUR↔USD Corridors Live</span><span>&middot;</span>
+      <span>AMM + RFQ Hybrid Routing</span><span>&middot;</span>
+      <span>EUR↔USDC, USDT, EURC</span><span>&middot;</span>
       <span>24/7 On-Chain Settlement</span>
     </div>
   </div>
@@ -829,7 +829,7 @@ html[data-theme="light"] .app-frame {
       <div class="ticker-title">Live Rates</div>
       <div class="ticker-sub">Reference FX + BlankFX route quotes &middot; refreshes automatically</div>
       <div id="tickerRows"></div>
-      <div class="ticker-live"><span class="live-dot"></span> Live feed &middot; FX Oracle + Sepolia router</div>
+      <div class="ticker-live"><span class="live-dot"></span> Live feed &middot; Powered by Chainlink + BlankFX RFQ</div>
     </div>
   </div>
 </section>
@@ -940,20 +940,20 @@ html[data-theme="light"] .app-frame {
     </div>
     <div class="stat-pills reveal">
       <div class="stat-pill">
-        <span class="val" id="usdPoolTvlValue">$--</span>
-        <span class="label">USD Pool TVL</span>
+        <span class="val">&lt;30 sec</span>
+        <span class="label">Settlement Time</span>
       </div>
       <div class="stat-pill">
-        <span class="val" id="eurPoolTvlValue">$--</span>
-        <span class="label">EUR Pool TVL</span>
+        <span class="val">0.05–0.35%</span>
+        <span class="label">Total Cost</span>
       </div>
       <div class="stat-pill">
         <span class="val" id="totalCurrenciesValue">4</span>
-        <span class="label">Total Currencies</span>
+        <span class="label">Currencies Supported</span>
       </div>
       <div class="stat-pill">
-        <span class="val">Sepolia</span>
-        <span class="label">Network</span>
+        <span class="val">24/7</span>
+        <span class="label">On-Chain Settlement</span>
       </div>
     </div>
   </div>
@@ -1293,20 +1293,20 @@ html[data-theme="light"] .app-frame {
   <div class="container">
     <div class="section-head reveal">
       <div class="eyebrow">Traction</div>
-      <h2>Trusted by operators building the future.</h2>
+      <h2>Building the future of FX infrastructure.</h2>
     </div>
     <div class="proof-metrics reveal">
       <div class="metric-card glass reveal-child">
-        <span class="val">$10M+</span>
-        <span class="label">Volume routed</span>
-      </div>
-      <div class="metric-card glass reveal-child">
         <span class="val">&lt;30 sec</span>
-        <span class="label">Avg settlement</span>
+        <span class="label">Settlement time</span>
       </div>
       <div class="metric-card glass reveal-child">
-        <span class="val">6+</span>
-        <span class="label">Issuer partners in pipeline</span>
+        <span class="val">0.05–0.35%</span>
+        <span class="label">Transparent pricing</span>
+      </div>
+      <div class="metric-card glass reveal-child">
+        <span class="val">24/7/365</span>
+        <span class="label">On-chain availability</span>
       </div>
     </div>
 
@@ -1324,7 +1324,7 @@ html[data-theme="light"] .app-frame {
 <section class="cta-band" id="contact">
   <div class="container" style="position:relative;z-index:1;">
     <h2>The FX market is moving on-chain.<br>Move with it.</h2>
-    <p>Currently onboarding design partners. EUR↔USDT corridor live.</p>
+    <p>Currently onboarding design partners. EUR↔USDC, USDT, EURC live.</p>
     <a href="https://app.blankfx.org" class="btn btn-primary" style="font-size:1.05rem;padding:0.85rem 2rem;">Go to the App &rarr;</a>
   </div>
 </section>
@@ -1505,7 +1505,6 @@ const ROUTER_ABI = [
 const tickerContainer = document.getElementById('tickerRows');
 const tickerDefinitions = [
   { key: 'usdEur', label: 'USD / EUR', rate: 0.9153, source: 'fx', change24h: null },
-  { key: 'usdAed', label: 'USD / AED', rate: 3.6725, source: 'fx', change24h: null },
   { key: 'usdMxn', label: 'USD / MXN', rate: 17.2341, source: 'fx', change24h: null },
   { key: 'usdtEurc', label: 'USDT / EURC', rate: 0.0, source: 'route', change24h: null }
 ];
@@ -1527,7 +1526,7 @@ function formatCompactUsd(value) {
 
 function renderTicker() {
   tickerContainer.innerHTML = tickerDefinitions.map((item) => {
-    const delta = typeof item.change24h === 'number' ? item.change24h : null;
+    const delta = typeof item.change24h === 'number' && Math.abs(item.change24h) >= 0.005 ? item.change24h : null;
     const directionClass = delta != null && delta > 0 ? 'up' : delta != null && delta < 0 ? 'down' : '';
     const deltaLabel = delta == null
       ? '—'
@@ -1557,7 +1556,7 @@ async function fetchPreviousFxSnapshot() {
     const timeout = setTimeout(() => controller.abort(), 3500);
     let response;
     try {
-      response = await fetch(`https://api.frankfurter.app/${formatIsoDate(date)}?from=USD&to=EUR,AED,MXN`, {
+      response = await fetch(`https://api.frankfurter.app/${formatIsoDate(date)}?from=USD&to=EUR,MXN`, {
         signal: controller.signal
       });
     } catch (error) {
@@ -1576,7 +1575,7 @@ async function fetchFxReferenceRates() {
   const latestController = new AbortController();
   const latestTimeout = setTimeout(() => latestController.abort(), 3500);
   const [latestResponse, previousRates] = await Promise.all([
-    fetch('https://api.frankfurter.app/latest?from=USD&to=EUR,AED,MXN', {
+    fetch('https://api.frankfurter.app/latest?from=USD&to=EUR,MXN', {
       signal: latestController.signal
     }),
     fetchPreviousFxSnapshot()
@@ -1586,10 +1585,9 @@ async function fetchFxReferenceRates() {
   if (!response.ok) throw new Error('FX reference fetch failed');
   const data = await response.json();
   if (!data || !data.rates) throw new Error('FX reference payload missing rates');
-  const { EUR, AED, MXN } = data.rates;
+  const { EUR, MXN } = data.rates;
   const fxMap = [
     ['usdEur', Number(EUR || 0), Number(previousRates?.EUR || 0)],
-    ['usdAed', Number(AED || 0), Number(previousRates?.AED || 0)],
     ['usdMxn', Number(MXN || 0), Number(previousRates?.MXN || 0)]
   ];
   fxMap.forEach(([key, current, previous]) => {
